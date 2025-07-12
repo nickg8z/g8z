@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>G8Z Capital</title>
+  <link
+  href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;700&display=swap"
+  rel="stylesheet"
+>
+  <style>
+    :root {
+      /* rose pine palette */
+      --bg-color: #191724;
+      --surface: #26233a;
+      --overlay-bg: rgba(42, 39, 63, 0.85);
+      --drawer-bg: rgba(42, 39, 63, 0.95);
+      --text: #e0def4;
+      --primary: #f6c177; /* foam */
+      --accent: #eb6f92;  /* rose */
+    }
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+      font-family: 'Fira Code', monospace;
+    }
+    body {
+      background: var(--bg-color);
+      color: var(--text);
+      overflow: hidden;
+    }
+    canvas { display: block; }
+    #chart {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: calc(100% - 200px);
+    }
+    #profit {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      width: 100%;
+      height: 200px;
+      background: var(--surface);
+    }
+    a {
+      color: var(--primary);
+      text-decoration: none;
+    }
+    a:hover { color: var(--accent); }
+    #overlay {
+      position: absolute;
+      top: 20px;
+      left: 50%;
+      transform: translate(-50%, -10px);
+      display: flex;
+      align-items: center;
+      background: var(--overlay-bg);
+      backdrop-filter: blur(10px);
+      padding: 12px 24px;
+      border-radius: 10px;
+      z-index: 10;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+      opacity: 0;
+      animation: fadeIn 0.6s forwards;
+      animation-delay: 0.2s;
+    }
+    .wordmark {
+      font-size: 1.75rem;
+      font-weight: 700;
+      letter-spacing: 2px;
+      color: var(--primary);
+    }
+    nav a {
+      margin-left: 24px;
+      font-weight: 500;
+      font-size: 1rem;
+      cursor: pointer;
+    }
+    .drawer {
+      position: absolute;
+      bottom: 0;
+      height: 50%;
+      background: var(--drawer-bg);
+      color: var(--text);
+      transform: translateY(100%);
+      transition: transform 0.5s cubic-bezier(0.23,1,0.32,1);
+      padding: 40px 60px;
+      overflow-y: auto;
+      z-index: 9;
+      border-top-left-radius: 20px;
+      border-top-right-radius: 20px;
+    }
+    #drawer-about { left: 5%; width: 40%; }
+    #drawer-contact { right: 5%; width: 40%; }
+    .drawer.open { transform: translateY(0); }
+    .drawer h2 {
+      margin-bottom: 16px;
+      font-size: 2rem;
+      color: var(--primary);
+      letter-spacing: 1px;
+    }
+    .drawer p {
+      line-height: 1.6;
+      margin-bottom: 24px;
+    }
+    .close {
+      position: absolute;
+      top: 24px;
+      right: 36px;
+      font-size: 1.5rem;
+      cursor: pointer;
+      color: var(--accent);
+    }
+    @keyframes fadeIn { to { opacity: 1; transform: translate(-50%, 0); } }
+  </style>
+</head>
+<body>
+  <div id="overlay">
+    <div class="wordmark">G8Z CAPITAL</div>
+    <nav><a id="link-about">About</a><a id="link-contact">Contact</a></nav>
+  </div>
+  <canvas id="chart"></canvas>
+  <canvas id="profit"></canvas>
+  <div id="drawer-about" class="drawer">
+    <span class="close" data-drawer="about">×</span>
+    <h2>About</h2>
+    <p>g8z capital operates a multi-strategy hedge fund, a venture capital arm, an incubator and an m&a advisory practice. it applies quantitative research and ai models to manage risk and seek returns. it invests in early-stage companies, offers operational support through its incubator and advises on mergers and acquisitions.</p>
+  </div>
+  <div id="drawer-contact" class="drawer">
+    <span class="close" data-drawer="contact">×</span>
+    <h2>Contact</h2>
+    <p><a href="mailto:nick@g8z.capital">nick@g8z.capital</a></p>
+  </div>
+  <script>
+    ['about','contact'].forEach(id => {
+      document.getElementById('link-'+id).onclick = () => document.getElementById('drawer-'+id).classList.toggle('open');
+      document.querySelector('#drawer-'+id+' .close').onclick = () => document.getElementById('drawer-'+id).classList.remove('open');
+    });
+
+    setInterval(() => {
+      document.getElementById('overlay').animate([
+        { transform: 'translate(-50%, -10px)' },
+        { transform: 'translate(-50%, 0)' }
+      ], { duration: 600, iterations: 1 });
+    }, 0);
+
+    function randn_bm() {
+      const u = 1 - Math.random();
+      const v = 1 - Math.random();
+      return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+    }
+
+    const chart = document.getElementById('chart');
+    const ctx = chart.getContext('2d');
+    const profitCanvas = document.getElementById('profit');
+    const pctx = profitCanvas.getContext('2d');
+    let w, h, cols, cw;
+    const gs = 50;
+    let closePrices = [];
+    let lastX = 0;
+    let pauseTimer;
+    const THROTTLE = 5;
+
+    function resize() {
+      w = chart.width = window.innerWidth;
+      h = chart.height = window.innerHeight - 200;
+      profitCanvas.width = window.innerWidth;
+      profitCanvas.height = 200;
+      cols = Math.ceil(w / gs);
+      cw = gs * 0.6;
+      closePrices = new Array(cols).fill(0);
+      simulateFull(0.5);
+      draw();
+    }
+    window.addEventListener('resize', resize);
+    resize();
+
+    function simulateFull(start) {
+      const mu = 0.0005;
+      const sigma = 0.05;
+      closePrices[0] = start;
+      for (let i = 1; i < cols; i++) {
+        let next = closePrices[i-1] * Math.exp((mu - 0.5*sigma*sigma)*1 + sigma*randn_bm());
+        if (Math.random() < 0.03) next *= 1 + randn_bm()*0.2;
+        closePrices[i] = Math.max(0, Math.min(1, next));
+      }
+    }
+
+    function simulateFrom(t) {
+      const sigma = 0.05;
+      closePrices[0] = t;
+      for (let i = 1; i < cols; i++) {
+        closePrices[i] = Math.max(0, Math.min(1, closePrices[i-1] * Math.exp(-0.5*sigma*sigma + sigma*randn_bm())));
+      }
+    }
+
+    function drawGrid() {
+      ctx.clearRect(0, 0, w, h);
+      ctx.strokeStyle = 'rgba(224,222,244,0.1)';
+      ctx.lineWidth = 1;
+      for (let x = 0; x <= w; x += gs) {
+        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke();
+      }
+      for (let y = 0; y <= h; y += gs) {
+        ctx.beginPath();  ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
+      }
+    }
+
+    function drawCandles() {
+      for (let i = 1; i < cols; i++) {
+        const o = closePrices[i-1];
+        const c = closePrices[i];
+        const high = Math.max(o, c) * (1 + Math.abs(randn_bm())*0.05);
+        const low = Math.min(o, c) * (1 - Math.abs(randn_bm())*0.05);
+        const x = i*gs + gs/2;
+        const yO = (1 - o)*h;
+        const yC = (1 - c)*h;
+        const yH = (1 - high)*h;
+        const yL = (1 - low)*h;
+        ctx.strokeStyle = 'rgba(200,200,200,0.6)';
+        ctx.beginPath(); ctx.moveTo(x, yH); ctx.lineTo(x, yL); ctx.stroke();
+        ctx.fillStyle = c > o ? 'rgba(0,200,0,0.6)' : 'rgba(200,0,0,0.6)';
+        ctx.fillRect(x - cw/2, Math.min(yO, yC), cw, Math.max(1, Math.abs(yC - yO)));
+      }
+    }
+
+    function computeSMA(data, period) {
+  const sma = [];
+  let sum = 0;
+  for (let i = 0; i < data.length; i++) {
+    sum += data[i];
+    if (i >= period) sum -= data[i - period];
+    sma[i] = sum / Math.min(period, i + 1);
+  }
+
+  return sma;
+}
+
+    function computeEMA(data, period) {
+      const ema=[]; const k=2/(period+1); ema[0]=data[0]; for(let i=1;i<data.length;i++) ema[i]=data[i]*k + (ema[i-1]||data[i])*(1-k); return ema; }
+    function computeBB(data, period) {
+      const sma=computeSMA(data,period), upper=[], lower=[];
+      for(let i=0;i<data.length;i++){ if(i<period-1){upper[i]=lower[i]=null;} else {const slice=data.slice(i-period+1,i+1);const mean=sma[i];const sd=Math.sqrt(slice.reduce((s,v)=>s+(v-mean)**2,0)/period); upper[i]=mean+2*sd; lower[i]=mean-2*sd;} }
+      return{upper,lower};
+    }
+
+    function drawIndicators() {
+      const sma20=computeSMA(closePrices,20);
+      const ema20=computeEMA(closePrices,20);
+      const bb=computeBB(closePrices,20);
+      ctx.lineWidth=1.5;
+      // sma
+      ctx.strokeStyle='gold'; ctx.beginPath(); sma20.forEach((v,i)=>{ if(i>0&&v!=null){const x0=(i-1)*gs+gs/2,y0=(1-sma20[i-1])*h,x1=i*gs+gs/2,y1=(1-v)*h;ctx.moveTo(x0,y0);ctx.lineTo(x1,y1);} }); ctx.stroke();
+      // ema
+      ctx.strokeStyle='cyan'; ctx.beginPath(); ema20.forEach((v,i)=>{ if(i>0){const x0=(i-1)*gs+gs/2,y0=(1-ema20[i-1])*h,x1=i*gs+gs/2,y1=(1-v)*h;ctx.moveTo(x0,y0);ctx.lineTo(x1,y1);} }); ctx.stroke();
+      // bb
+      ctx.strokeStyle='purple'; ctx.beginPath(); bb.upper.forEach((v,i)=>{ if(v!=null){const x=i*gs+gs/2,y=(1-v)*h; i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);} }); ctx.stroke();
+      ctx.beginPath(); bb.lower.forEach((v,i)=>{ if(v!=null){const x=i*gs+gs/2,y=(1-v)*h; i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);} }); ctx.stroke();
+    }
+
+    function draw() { drawGrid(); drawCandles(); drawIndicators(); }
+    function runMonteCarlo() {
+      const trials=500, results=[];
+      for(let i=0;i<trials;i++) results.push(randn_bm()*0.1+0.128);
+      drawHistogram(results); drawEquity();
+    }
+    function drawHistogram(data) {
+      const bins=20, counts=new Array(bins).fill(0);
+      const min=Math.min(...data), max=Math.max(...data), range=max-min;
+      let profitable=0;
+      data.forEach(v=>{ if(v>0) profitable++; const idx=Math.floor((v-min)/range*(bins-1)); counts[idx]++; });
+      pctx.clearRect(0,0,profitCanvas.width,profitCanvas.height);
+      const maxC=Math.max(...counts), barW=profitCanvas.width/bins;
+      counts.forEach((c,i)=>{
+        const hgt=(c/maxC)*profitCanvas.height;
+        const mid=min+(i+0.5)*(range/bins);
+        pctx.fillStyle=mid>0?'rgba(0,200,0,0.7)':'rgba(200,0,0,0.7)';
+        pctx.fillRect(i*barW,profitCanvas.height-hgt,barW*0.9,hgt);
+      });
+      pctx.globalAlpha=1; pctx.font='16px FiraCode Nerd Font'; pctx.fillStyle='var(--primary)';
+      pctx.fillText(`Profitable: ${(profitable/data.length*100).toFixed(1)}%`,10,20);
+    }
+    function drawEquity() {
+      const vals=closePrices.map(p=>p*1e6);
+      const min=Math.min(...vals), max=Math.max(...vals);
+      pctx.beginPath(); pctx.strokeStyle='var(--accent)'; pctx.lineWidth=2;
+      vals.forEach((v,i)=>{
+        const x=i*(profitCanvas.width/cols);
+        const y=profitCanvas.height-((v-min)/(max-min))*profitCanvas.height;
+        i===0?pctx.moveTo(x,y):pctx.lineTo(x,y);
+      });
+      pctx.stroke();
+    }
+    chart.addEventListener('pointermove',e=>{
+      if(Math.abs(e.clientX-lastX)<THROTTLE) return;
+      lastX=e.clientX;
+      const xN=e.clientX/w, yN=e.clientY/h;
+      const t=(xN+(1-Math.min(1,Math.max(0,yN))))/2;
+      simulateFrom(t);
+      draw();
+      clearTimeout(pauseTimer);
+      pauseTimer=setTimeout(runMonteCarlo,500);
+    });
+  </script>
+</body>
+</html>
